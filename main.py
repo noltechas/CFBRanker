@@ -1,6 +1,7 @@
 import requests
 import matplotlib.pyplot as plt
 import json
+import math
 
 from Conference import Conference
 from Team import Team
@@ -22,6 +23,38 @@ def load_team_info():
 team_info = load_team_info()
 
 
+def calculate_margin(home_points, away_points, mov_type):
+    """
+    Calculate margin of victory based on the specified algorithm
+    """
+    if home_points == away_points:
+        return 0
+
+    winning_points = max(home_points, away_points)
+    losing_points = min(home_points, away_points)
+    total_points = home_points + away_points
+
+    if mov_type == "logarithmic":
+        # Logarithmic scaling: dampens huge blowouts
+        point_diff = winning_points - losing_points
+        if total_points == 0:
+            return 0
+        margin = math.log(1 + point_diff) / math.log(1 + total_points)
+        return margin
+
+    elif mov_type == "capped_linear":
+        # Capped linear margin: caps at 21 points, scales 1.0 to 1.5
+        point_diff = winning_points - losing_points
+        capped_diff = min(point_diff, 21)
+        margin = 1 + (capped_diff / 21) * 0.5  # Range: 1.0 to 1.5
+        return margin
+
+    else:  # original algorithm
+        if total_points == 0:
+            return 0
+        return (winning_points - losing_points) / total_points
+
+
 def fetch_data(year, week):
     url = f"https://api.collegefootballdata.com/games?year={year}&week={week}&seasonType=regular"
     headers = {
@@ -38,12 +71,13 @@ def fetch_data(year, week):
     else:
         raise Exception(f"Failed to fetch data for year {year}, week {week}: {response.status_code}")
 
-def process_games(data, teams, conferences):
+def process_games(data, teams, conferences, mov_type="none"):
     games_processed = 0
     total_games = len(data)
     completed_games = len([g for g in data if g.get('completed', False)])
 
     print(f"Processing {total_games} total games, {completed_games} completed")
+    print(f"Using MOV algorithm: {mov_type}")
 
     # Define known FBS conferences
     FBS_CONFERENCES = {
@@ -122,14 +156,8 @@ def process_games(data, teams, conferences):
             away_is_fbs = away_team.division.lower() == 'fbs'
 
             if home_is_fbs or away_is_fbs:
-                total_points = home_points + away_points
-                if total_points > 0:
-                    if home_points > away_points:
-                        margin = (home_points - away_points) / total_points
-                    else:
-                        margin = (away_points - home_points) / total_points
-                else:
-                    margin = 0
+                # Use the new margin calculation
+                margin = calculate_margin(home_points, away_points, mov_type)
 
                 if home_points > away_points:
                     home_team.add_win(away_team.id, away_is_fbs, margin)
@@ -526,14 +554,14 @@ def create_playoff_bracket(final_rankings, conferences, auto_bids, year):
     print(f"Enhanced playoff bracket saved as 'playoff_bracket.png'")
 
 
-def main(year, current_week, auto_bids=5, mov=True):
+def main(year, current_week, auto_bids=5, mov=True, mov_type="none"):
     teams = {}
     conferences = {}
 
     for week in range(1, current_week + 1):
         try:
             data = fetch_data(year, week)
-            teams, conferences = process_games(data, teams, conferences)
+            teams, conferences = process_games(data, teams, conferences, mov_type if mov else "none")
             print(f"Processed data for year {year}, week {week}")
         except Exception as e:
             print(f"Error processing week {week}: {e}")
@@ -570,8 +598,9 @@ def main(year, current_week, auto_bids=5, mov=True):
         print("No rankings generated - no games found or processed")
 
 if __name__ == "__main__":
-    year = 2024
-    current_week = 15
+    year = 2025
+    current_week = 3
     auto_bids = 5
-    mov = False
-    main(year, current_week, auto_bids, mov)
+    mov = True
+    mov_type = "capped_linear"  # Options: "none", "logarithmic", "capped_linear"
+    main(year, current_week, auto_bids, mov, mov_type)
